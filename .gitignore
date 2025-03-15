@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+.env
+
+# Build files
+*.zip
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# AWS
+.aws/
+
+# OS
+.DS_Store
+Thumbs.db
