@@ -127,6 +127,16 @@ export const handler = async (event) => {
         value: 'master.d1ul468muq9dvs.amplifyapp.com'
       }];
       
+      // Add CORS headers to expose x-debug-workspace
+      transformedRequest.headers['access-control-expose-headers'] = [{
+        key: 'Access-Control-Expose-Headers',
+        value: 'x-debug-workspace,x-debug-original-uri,x-debug-transformed-uri'
+      }];
+      transformedRequest.headers['access-control-allow-origin'] = [{
+        key: 'Access-Control-Allow-Origin',
+        value: '*'
+      }];
+      
       log('info', '=== TRANSFORMED REQUEST ===', { 
         originalHost: host,
         originalUri: request.uri,
@@ -143,6 +153,10 @@ export const handler = async (event) => {
       transformedRequest.headers['x-debug-original-uri'] = [{
         key: 'X-Debug-Original-Uri',
         value: request.uri
+      }];
+      transformedRequest.headers['x-debug-transformed-uri'] = [{
+        key: 'X-Debug-Transformed-Uri',
+        value: transformedRequest.uri
       }];
 
       return transformedRequest;

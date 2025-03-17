@@ -1,56 +1,60 @@
 export const handler = async (event) => {
   try {
-    console.log('=== START ORIGIN REQUEST ===', JSON.stringify(event));
+    console.log('=== START REQUEST ===', JSON.stringify(event));
 
     // Validate CloudFront event structure
     if (!event?.Records?.[0]?.cf?.request) {
-      console.error('Invalid event structure', { event });
       throw new Error('Invalid event structure');
     }
 
     const request = event.Records[0].cf.request;
-    
-    // Check if we have a custom host header
-    if (request.headers['x-custom-host']?.[0]?.value) {
-      const customHost = request.headers['x-custom-host'][0].value;
-      console.log('Setting Host header', { customHost });
-      
-      // Log the request details
-      console.log('Origin request details', {
-        uri: request.uri,
-        customHost,
-        originalHost: request.headers.host?.[0]?.value
-      });
+    console.log('Processing request', { 
+      uri: request.uri,
+      headers: JSON.stringify(request.headers)
+    });
 
-      // Set the Host header to the custom host
+    // If x-custom-host header is present, use it as the new Host header
+    if (request.headers['x-custom-host']) {
       request.headers.host = [{
         key: 'Host',
-        value: customHost
+        value: request.headers['x-custom-host'][0].value
       }];
-      
-      // Remove the custom host header as it's no longer needed
       delete request.headers['x-custom-host'];
+    }
+
+    // Pass through debug headers
+    if (request.headers['x-debug-workspace']) {
+      request.headers['x-debug-workspace'] = request.headers['x-debug-workspace'];
+    }
+    if (request.headers['x-debug-original-uri']) {
+      request.headers['x-debug-original-uri'] = request.headers['x-debug-original-uri'];
+    }
+    if (request.headers['x-debug-transformed-uri']) {
+      request.headers['x-debug-transformed-uri'] = request.headers['x-debug-transformed-uri'];
+    }
+
+    // For index.html requests, add meta tags with debug info
+    if (request.uri.endsWith('/') || request.uri.endsWith('index.html')) {
+      const debugInfo = {
+        'x-debug-workspace': request.headers['x-debug-workspace']?.[0]?.value,
+        'x-debug-original-uri': request.headers['x-debug-original-uri']?.[0]?.value,
+        'x-debug-transformed-uri': request.headers['x-debug-transformed-uri']?.[0]?.value
+      };
+
+      // Add a header to signal Amplify to inject meta tags
+      request.headers['x-amz-meta-debug'] = [{
+        key: 'X-Amz-Meta-Debug',
+        value: JSON.stringify(debugInfo)
+      }];
     }
 
     console.log('=== TRANSFORMED REQUEST ===', JSON.stringify(request));
     return request;
   } catch (error) {
     console.error('Handler error', { 
-      error,
-      type: error.constructor.name,
-      status: error.status
+      error: error.message,
+      stack: error.stack
     });
-
-    return {
-      status: '500',
-      statusDescription: 'Internal Server Error',
-      headers: {
-        'content-type': [{
-          key: 'Content-Type',
-          value: 'text/plain'
-        }],
-      },
-      body: 'An error occurred processing your request'
-    };
+    return request;
   }
 };

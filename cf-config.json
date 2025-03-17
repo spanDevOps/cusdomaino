@@ -78,12 +78,12 @@
       "Quantity": 2,
       "Items": [
         {
-          "LambdaFunctionARN": "arn:aws:lambda:us-east-1:590183815265:function:origin-request-edge:3",
+          "LambdaFunctionARN": "arn:aws:lambda:us-east-1:590183815265:function:origin-request-edge:6",
           "EventType": "origin-request",
           "IncludeBody": false
         },
         {
-          "LambdaFunctionARN": "arn:aws:lambda:us-east-1:590183815265:function:domain-mapper-edge:40",
+          "LambdaFunctionARN": "arn:aws:lambda:us-east-1:590183815265:function:domain-mapper-edge:43",
           "EventType": "viewer-request",
           "IncludeBody": false
         }
