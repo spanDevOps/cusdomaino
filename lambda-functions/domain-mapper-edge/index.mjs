@@ -104,10 +104,12 @@ export const handler = async (event) => {
       // Always ensure request.uri starts with /
       const requestUri = request.uri.startsWith('/') ? request.uri : `/${request.uri}`;
       
-      // Add workspace to path: /workspace-1/path
-      // If the path is just /, add the workspace ID
-      // If the path is something else (like /static/js/main.js), preserve it
-      transformedRequest.uri = requestUri === '/' ? `/${workspaceId}/` : `/${workspaceId}${requestUri}`;
+      // Check if the path already contains a workspace ID
+      const workspaceMatch = requestUri.match(/^\/workspace-\d+/);
+      
+      // If the path already has a workspace ID, leave it as is
+      // Otherwise, add the workspace ID from DynamoDB
+      transformedRequest.uri = workspaceMatch ? requestUri : `/${workspaceId}${requestUri === '/' ? '/' : requestUri}`;
 
       // For viewer-request, we can't modify the Host header
       // Instead, we'll store the target host in x-custom-host
