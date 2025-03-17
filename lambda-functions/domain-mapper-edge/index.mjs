@@ -109,7 +109,15 @@ export const handler = async (event) => {
       
       // If the path already has a workspace ID, leave it as is
       // Otherwise, add the workspace ID from DynamoDB
-      transformedRequest.uri = workspaceMatch ? requestUri : `/workspace-${workspaceId.split('-')[1]}${requestUri === '/' ? '' : requestUri}`;
+      const workspaceNumber = workspaceId.split('-')[1];
+      transformedRequest.uri = workspaceMatch ? requestUri : `/workspace-${workspaceNumber}${requestUri === '/' ? '' : requestUri}`;
+
+      // Log the path transformation
+      log('info', 'Path transformation', {
+        originalUri: request.uri,
+        transformedUri: transformedRequest.uri,
+        host: request.headers.host[0].value
+      });
 
       // For viewer-request, we can't modify the Host header
       // Instead, we'll store the target host in x-custom-host
