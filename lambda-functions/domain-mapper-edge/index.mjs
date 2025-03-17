@@ -4,10 +4,6 @@ const dynamoDB = new DynamoDB({
   region: 'us-east-1'
 });
 
-// Simple in-memory cache
-const cache = {};
-const CACHE_TTL = 300000; // 5 minutes
-
 // Helper for structured logging
 function log(level, message, data = {}) {
   // Ensure error objects are properly serialized
@@ -41,7 +37,7 @@ function log(level, message, data = {}) {
 
 export const handler = async (event) => {
   try {
-    log('info', 'Received request', { 
+    log('info', '=== START REQUEST ===', { 
       eventType: event?.Records?.[0]?.cf?.config?.eventType,
       event: JSON.stringify(event)
     });
@@ -62,25 +58,14 @@ export const handler = async (event) => {
     log('info', 'Processing request', { 
       host, 
       uri: request.uri,
-      headers: request.headers,
-      origin: request.origin
+      headers: JSON.stringify(request.headers),
+      origin: JSON.stringify(request.origin)
     });
 
     // If this is already the Amplify domain, don't process it
     if (host.includes('amplifyapp.com')) {
       log('info', 'Skipping Amplify domain', { host });
       return request;
-    }
-
-    // Check cache first
-    if (cache[host] && cache[host].expiry > Date.now()) {
-      log('info', 'Cache hit', { host, cached: cache[host] });
-      if (!cache[host].workspaceId) {
-        log('info', 'Cache indicates domain not configured', { host });
-        return createNotFoundResponse(host);
-      }
-      log('info', 'Using cached workspace', { host, workspaceId: cache[host].workspaceId });
-      return transformRequest(request, cache[host].workspaceId);
     }
 
     // Query DynamoDB for custom domain mapping
@@ -107,30 +92,37 @@ export const handler = async (event) => {
           hasWorkspaceId: !!Item?.workspaceId?.S,
           status: Item?.status?.S
         });
-        // Update cache to remember this domain is not configured
-        cache[host] = {
-          workspaceId: null,
-          expiry: Date.now() + CACHE_TTL
-        };
         return createNotFoundResponse(host);
       }
 
       const workspaceId = Item.workspaceId.S;
       log('info', 'Found mapping', { host, workspaceId });
-      
-      // Update cache only for valid mappings
-      cache[host] = {
-        workspaceId,
-        expiry: Date.now() + CACHE_TTL
-      };
 
-      const transformedRequest = transformRequest(request, workspaceId);
-      log('info', 'Transformed request', { 
+      // Create a deep copy of the request
+      const transformedRequest = JSON.parse(JSON.stringify(request));
+
+      // Always ensure request.uri starts with /
+      const requestUri = request.uri.startsWith('/') ? request.uri : `/${request.uri}`;
+      
+      // Add workspace to path: /workspace-1/path
+      // If the path is just /, add the workspace ID
+      // If the path is something else (like /static/js/main.js), preserve it
+      transformedRequest.uri = requestUri === '/' ? `/${workspaceId}/` : `/${workspaceId}${requestUri}`;
+
+      // For viewer-request, we can't modify the Host header
+      // Instead, we'll store the target host in x-custom-host
+      // and let origin-request handle it
+      transformedRequest.headers['x-custom-host'] = [{
+        key: 'X-Custom-Host',
+        value: 'master.d1ul468muq9dvs.amplifyapp.com'
+      }];
+      
+      log('info', '=== TRANSFORMED REQUEST ===', { 
         originalHost: host,
         originalUri: request.uri,
-        newHost: transformedRequest.headers.host[0].value,
         newUri: transformedRequest.uri,
-        newOrigin: transformedRequest.origin.custom.domainName
+        customHost: transformedRequest.headers['x-custom-host'][0].value,
+        transformedRequest: JSON.stringify(transformedRequest)
       });
       return transformedRequest;
     } catch (dbError) {
@@ -180,51 +172,6 @@ export const handler = async (event) => {
     };
   }
 };
-
-// Helper to transform request to workspace path
-function transformRequest(request, workspaceId) {
-  const newDomain = 'master.d1ul468muq9dvs.amplifyapp.com';
-  
-  // Always ensure request.uri starts with /
-  const requestUri = request.uri.startsWith('/') ? request.uri : `/${request.uri}`;
-  
-  // Add workspace to path: /workspace-1/path
-  // If the path is just /, add the workspace ID
-  // If the path is something else (like /static/js/main.js), preserve it
-  const newUri = requestUri === '/' ? `/${workspaceId}/` : `/${workspaceId}${requestUri}`;
-  
-  log('info', 'Setting origin', { 
-    originalHost: request.headers.host[0].value,
-    newDomain,
-    originalUri: request.uri,
-    newUri,
-    request: JSON.stringify(request)
-  });
-  
-  request.origin = {
-    custom: {
-      domainName: newDomain,
-      port: 443,
-      protocol: 'https',
-      path: '',
-      sslProtocols: ['TLSv1.2'],
-      readTimeout: 30,
-      keepaliveTimeout: 5,
-      customHeaders: {},
-      originProtocolPolicy: 'https-only'
-    }
-  };
-  request.headers.host = [{ key: 'Host', value: newDomain }];
-  request.uri = newUri;
-  
-  log('debug', 'Returning modified request', { 
-    host: request.headers.host[0].value,
-    origin: request.origin.custom.domainName,
-    uri: request.uri,
-    request: JSON.stringify(request)
-  });
-  return request;
-}
 
 // Helper to create 404 response
 function createNotFoundResponse(host) {

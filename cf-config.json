@@ -75,10 +75,15 @@
         "SmoothStreaming": false,
         "Compress": true,
         "LambdaFunctionAssociations": {
-            "Quantity": 1,
+            "Quantity": 2,
             "Items": [
                 {
-                    "LambdaFunctionARN": "arn:aws:lambda:us-east-1:590183815265:function:domain-mapper-edge:30",
+                    "LambdaFunctionARN": "arn:aws:lambda:us-east-1:590183815265:function:domain-mapper-edge:35",
+                    "EventType": "viewer-request",
+                    "IncludeBody": false
+                },
+                {
+                    "LambdaFunctionARN": "arn:aws:lambda:us-east-1:590183815265:function:origin-request-edge:2",
                     "EventType": "origin-request",
                     "IncludeBody": false
                 }
@@ -89,7 +94,7 @@
         },
         "FieldLevelEncryptionId": "",
         "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
-        "OriginRequestPolicyId": "216adef6-5c7f-47e4-b989-5492eafa07d3",
+        "OriginRequestPolicyId": "a8210d96-0a94-4a98-b5e1-8e7e119641a4",
         "GrpcConfig": {
             "Enabled": false
         }

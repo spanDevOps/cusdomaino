@@ -1,0 +1,17 @@
+{
+    "Name": "AllowLambdaHeadersPolicy",
+    "Comment": "Policy that allows headers from Lambda@Edge by excluding viewer's Host header",
+    "HeadersConfig": {
+        "HeaderBehavior": "allExcept",
+        "Headers": {
+            "Items": ["Host"],
+            "Quantity": 1
+        }
+    },
+    "CookiesConfig": {
+        "CookieBehavior": "none"
+    },
+    "QueryStringsConfig": {
+        "QueryStringBehavior": "none"
+    }
+}
