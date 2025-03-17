@@ -109,7 +109,7 @@ export const handler = async (event) => {
       
       // If the path already has a workspace ID, leave it as is
       // Otherwise, add the workspace ID from DynamoDB
-      transformedRequest.uri = workspaceMatch ? requestUri : `/${workspaceId}${requestUri === '/' ? '/' : requestUri}`;
+      transformedRequest.uri = workspaceMatch ? requestUri : `/workspace-${workspaceId.split('-')[1]}${requestUri === '/' ? '' : requestUri}`;
 
       // For viewer-request, we can't modify the Host header
       // Instead, we'll store the target host in x-custom-host
@@ -126,6 +126,17 @@ export const handler = async (event) => {
         customHost: transformedRequest.headers['x-custom-host'][0].value,
         transformedRequest: JSON.stringify(transformedRequest)
       });
+
+      // Add debug headers
+      transformedRequest.headers['x-debug-workspace'] = [{
+        key: 'X-Debug-Workspace',
+        value: workspaceId
+      }];
+      transformedRequest.headers['x-debug-original-uri'] = [{
+        key: 'X-Debug-Original-Uri',
+        value: request.uri
+      }];
+
       return transformedRequest;
     } catch (dbError) {
       log('error', 'DynamoDB error', { 
