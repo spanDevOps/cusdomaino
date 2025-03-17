@@ -41,7 +41,10 @@ function log(level, message, data = {}) {
 
 export const handler = async (event) => {
   try {
-    log('info', 'Received request', { eventType: event?.Records?.[0]?.cf?.config?.eventType });
+    log('info', 'Received request', { 
+      eventType: event?.Records?.[0]?.cf?.config?.eventType,
+      event: JSON.stringify(event)
+    });
 
     // Validate CloudFront event structure
     if (!event?.Records?.[0]?.cf?.request) {
@@ -56,122 +59,95 @@ export const handler = async (event) => {
     }
 
     const host = request.headers.host[0].value.toLowerCase(); // Normalize to lowercase
-    log('info', 'Processing request', { host, uri: request.uri });
-    
-    // If this is already the Amplify domain, don't process it
-    if (host.includes('amplifyapp.com')) {
-      log('info', 'Skipping Amplify domain', { host });
-      return request;
-    }
+    log('info', 'Processing request', { 
+      host, 
+      uri: request.uri,
+      headers: request.headers,
+      origin: request.origin
+    });
 
-    let workspaceId;
-
-    // Check if this is a VE.AI domain
-    if (host.endsWith('ve.ai')) {
-      // Extract workspace ID from subdomain: workspace-1.ve.ai -> workspace-1
-      workspaceId = host.split('.')[0];
-      log('info', 'VE.AI domain, extracted workspace', { host, workspaceId });
-    } else {
-      // For custom domains, check cache first
-      if (cache[host] && cache[host].expiry > Date.now()) {
-        log('info', 'Cache hit', { host, cached: cache[host] });
-        if (cache[host].workspaceId) {
-          workspaceId = cache[host].workspaceId;
-          log('info', 'Using cached workspace', { host, workspaceId });
-        } else {
-          log('info', 'Cache indicates domain not configured', { host });
-          return createNotFoundResponse(host);
-        }
-      } else {
-        // Query DynamoDB for custom domain mapping
-        log('info', 'Looking up domain mapping', { host });
-        const params = {
-          TableName: 'domain-workspace-mappings',
-          Key: {
-            domain: { S: host }
-          }
-        };
-        
-        try {
-          const { Item } = await dynamoDB.getItem(params);
-          log('debug', 'DynamoDB GetItem response', { 
-            hasItem: !!Item,
-            workspaceId: Item?.workspaceId?.S,
-            status: Item?.status?.S 
-          });
-          
-          if (!Item?.workspaceId?.S || Item.status?.S !== 'active') {
-            log('info', 'No active mapping found', { 
-              host,
-              hasWorkspaceId: !!Item?.workspaceId?.S,
-              status: Item?.status?.S
-            });
-            // Update cache to remember this domain is not configured
-            cache[host] = {
-              workspaceId: null,
-              expiry: Date.now() + CACHE_TTL
-            };
-            return createNotFoundResponse(host);
-          }
-
-          workspaceId = Item.workspaceId.S;
-          log('info', 'Found mapping', { host, workspaceId });
-          
-          // Update cache only for valid mappings
-          cache[host] = {
-            workspaceId,
-            expiry: Date.now() + CACHE_TTL
-          };
-        } catch (dbError) {
-          log('error', 'DynamoDB error', { 
-            error: dbError,
-            operation: 'getItem',
-            params: { 
-              TableName: params.TableName,
-              Key: { domain: host }
-            }
-          });
-          return {
-            status: '500',
-            statusDescription: 'Internal Server Error',
-            headers: {
-              'content-type': [{
-                key: 'Content-Type',
-                value: 'text/plain'
-              }],
-            },
-            body: 'An error occurred while looking up the domain configuration'
-          };
-        }
+    // Check cache first
+    if (cache[host] && cache[host].expiry > Date.now()) {
+      log('info', 'Cache hit', { host, cached: cache[host] });
+      if (!cache[host].workspaceId) {
+        log('info', 'Cache indicates domain not configured', { host });
+        return createNotFoundResponse(host);
       }
+      log('info', 'Using cached workspace', { host, workspaceId: cache[host].workspaceId });
+      return transformRequest(request, cache[host].workspaceId);
     }
 
-    // Set the origin domain and modify path to include workspace
-    const newDomain = 'master.d1ul468muq9dvs.amplifyapp.com';
-    const newUri = `/${workspaceId}${request.uri}`;
-    log('info', 'Setting origin', { host, newDomain, newUri });
-    request.origin = {
-      custom: {
-        domainName: newDomain,
-        port: 443,
-        protocol: 'https',
-        path: '',
-        sslProtocols: ['TLSv1.2'],
-        readTimeout: 30,
-        keepaliveTimeout: 5,
-        customHeaders: {},
-        originProtocolPolicy: 'https-only'
+    // Query DynamoDB for custom domain mapping
+    log('info', 'Looking up domain mapping', { host });
+    const params = {
+      TableName: 'domain-workspace-mappings',
+      Key: {
+        domain: { S: host }
       }
     };
-    request.headers.host = [{ key: 'Host', value: newDomain }];
-    request.uri = newUri;
     
-    log('debug', 'Returning modified request', { 
-      host: request.headers.host[0].value,
-      origin: request.origin.custom.domainName,
-      uri: request.uri
-    });
-    return request;
+    try {
+      const { Item } = await dynamoDB.getItem(params);
+      log('debug', 'DynamoDB GetItem response', { 
+        hasItem: !!Item,
+        workspaceId: Item?.workspaceId?.S,
+        status: Item?.status?.S,
+        item: JSON.stringify(Item)
+      });
+      
+      if (!Item || !Item.workspaceId?.S || Item.status?.S !== 'active') {
+        log('info', 'No active mapping found', { 
+          host,
+          hasWorkspaceId: !!Item?.workspaceId?.S,
+          status: Item?.status?.S
+        });
+        // Update cache to remember this domain is not configured
+        cache[host] = {
+          workspaceId: null,
+          expiry: Date.now() + CACHE_TTL
+        };
+        return createNotFoundResponse(host);
+      }
+
+      const workspaceId = Item.workspaceId.S;
+      log('info', 'Found mapping', { host, workspaceId });
+      
+      // Update cache only for valid mappings
+      cache[host] = {
+        workspaceId,
+        expiry: Date.now() + CACHE_TTL
+      };
+
+      const transformedRequest = transformRequest(request, workspaceId);
+      log('info', 'Transformed request', { 
+        originalHost: host,
+        originalUri: request.uri,
+        newHost: transformedRequest.headers.host[0].value,
+        newUri: transformedRequest.uri,
+        newOrigin: transformedRequest.origin.custom.domainName
+      });
+      return transformedRequest;
+    } catch (dbError) {
+      log('error', 'DynamoDB error', { 
+        error: dbError,
+        operation: 'getItem',
+        params: { 
+          TableName: params.TableName,
+          Key: { domain: host }
+        }
+      });
+      return {
+        status: '500',
+        statusDescription: 'Internal Server Error',
+        headers: {
+          'content-type': [{
+            key: 'Content-Type',
+            value: 'text/plain'
+          }],
+        },
+        body: 'An error occurred while looking up the domain configuration'
+      };
+    }
   } catch (error) {
     log('error', 'Handler error', { 
       error,
@@ -199,6 +175,48 @@ export const handler = async (event) => {
   }
 };
 
+// Helper to transform request to workspace path
+function transformRequest(request, workspaceId) {
+  const newDomain = 'master.d1ul468muq9dvs.amplifyapp.com';
+  // Always ensure request.uri starts with /
+  const requestUri = request.uri.startsWith('/') ? request.uri : `/${request.uri}`;
+  // Add workspace to path: /workspace-1/path
+  const newUri = `/${workspaceId}${requestUri}`;
+  
+  log('info', 'Setting origin', { 
+    originalHost: request.headers.host[0].value,
+    newDomain,
+    originalUri: request.uri,
+    newUri,
+    request: JSON.stringify(request)
+  });
+  
+  request.origin = {
+    custom: {
+      domainName: newDomain,
+      port: 443,
+      protocol: 'https',
+      path: '',
+      sslProtocols: ['TLSv1.2'],
+      readTimeout: 30,
+      keepaliveTimeout: 5,
+      customHeaders: {},
+      originProtocolPolicy: 'https-only'
+    }
+  };
+  request.headers.host = [{ key: 'Host', value: newDomain }];
+  request.uri = newUri;
+  
+  log('debug', 'Returning modified request', { 
+    host: request.headers.host[0].value,
+    origin: request.origin.custom.domainName,
+    uri: request.uri,
+    request: JSON.stringify(request)
+  });
+  return request;
+}
+
+// Helper to create 404 response
 function createNotFoundResponse(host) {
   return {
     status: '404',
@@ -209,6 +227,6 @@ function createNotFoundResponse(host) {
         value: 'text/plain'
       }],
     },
-    body: `Domain ${host} is not configured. Please check your domain settings in the VE.AI dashboard.`
+    body: `Domain ${host} is not configured`
   };
 }
