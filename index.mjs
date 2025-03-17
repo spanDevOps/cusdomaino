@@ -1,41 +1,18 @@
 import { DynamoDB } from '@aws-sdk/client-dynamodb';
 
 const dynamoDB = new DynamoDB({
-  region: 'us-east-1'
+  region: 'us-east-1',
 });
 
-// Simple in-memory cache
+const CACHE_TTL = 300000; // 5 minutes in milliseconds
 const cache = {};
-const CACHE_TTL = 300000; // 5 minutes
 
-// Helper for structured logging
 function log(level, message, data = {}) {
-  // Ensure error objects are properly serialized
-  if (data.error instanceof Error) {
-    data.error = {
-      message: data.error.message,
-      stack: data.error.stack,
-      name: data.error.name
-    };
-  }
-  
-  // Clean up circular references and large objects
-  const cleanData = JSON.parse(JSON.stringify(data, (key, value) => {
-    if (key === 'headers' && typeof value === 'object') {
-      // Only include essential headers
-      return {
-        host: value.host,
-        'user-agent': value['user-agent']
-      };
-    }
-    return value;
-  }));
-
   console.log(JSON.stringify({
     timestamp: new Date().toISOString(),
     level,
     message,
-    ...cleanData
+    ...data,
   }));
 }
 
@@ -48,13 +25,11 @@ export const handler = async (event) => {
 
     // Validate CloudFront event structure
     if (!event?.Records?.[0]?.cf?.request) {
-      log('error', 'Invalid event structure', { event });
-      throw new Error('Invalid event structure');
+      throw new Error('Invalid CloudFront event structure');
     }
 
     const request = event.Records[0].cf.request;
-    if (!request.headers?.host?.[0]?.value) {
-      log('error', 'Missing host header', { headers: request.headers });
+    if (!request?.headers?.host?.[0]?.value) {
       throw new Error('Missing host header');
     }
 
@@ -72,17 +47,6 @@ export const handler = async (event) => {
       return request;
     }
 
-    // Check cache first
-    if (cache[host] && cache[host].expiry > Date.now()) {
-      log('info', 'Cache hit', { host, cached: cache[host] });
-      if (!cache[host].workspaceId) {
-        log('info', 'Cache indicates domain not configured', { host });
-        return createNotFoundResponse(host);
-      }
-      log('info', 'Using cached workspace', { host, workspaceId: cache[host].workspaceId });
-      return transformRequest(request, cache[host].workspaceId);
-    }
-
     // Query DynamoDB for custom domain mapping
     log('info', 'Looking up domain mapping', { host });
     const params = {
@@ -91,7 +55,7 @@ export const handler = async (event) => {
         domain: { S: host }
       }
     };
-    
+
     try {
       const { Item } = await dynamoDB.getItem(params);
       log('debug', 'DynamoDB GetItem response', { 
@@ -155,18 +119,10 @@ export const handler = async (event) => {
       };
     }
   } catch (error) {
-    log('error', 'Handler error', { 
+    log('error', 'Handler error', {
       error,
-      type: error.constructor.name,
-      status: error.status
+      event: JSON.stringify(event)
     });
-
-    // If error is already a response (like our NotFound), return it
-    if (error.status) {
-      return error;
-    }
-
-    // For other errors, return a 500
     return {
       status: '500',
       statusDescription: 'Internal Server Error',
@@ -176,7 +132,7 @@ export const handler = async (event) => {
           value: 'text/plain'
         }],
       },
-      body: 'An error occurred processing your request'
+      body: 'An error occurred while processing the request'
     };
   }
 };
@@ -186,25 +142,14 @@ function transformRequest(request, workspaceId) {
   const newDomain = 'master.d1ul468muq9dvs.amplifyapp.com';
   // Always ensure request.uri starts with /
   const requestUri = request.uri.startsWith('/') ? request.uri : `/${request.uri}`;
-  
-  // Don't add workspace prefix for static assets
-  const isStaticAsset = requestUri.startsWith('/static/') || 
-                       requestUri.endsWith('.js') || 
-                       requestUri.endsWith('.css') || 
-                       requestUri.endsWith('.png') || 
-                       requestUri.endsWith('.jpg') || 
-                       requestUri.endsWith('.ico') || 
-                       requestUri.endsWith('.json');
-  
-  // Add workspace to path only for non-static assets: /workspace-1/path
-  const newUri = isStaticAsset ? requestUri : `/${workspaceId}${requestUri}`;
+  // Add workspace to path: /workspace-1/path
+  const newUri = `/${workspaceId}${requestUri}`;
   
   log('info', 'Setting origin', { 
     originalHost: request.headers.host[0].value,
     newDomain,
     originalUri: request.uri,
     newUri,
-    isStaticAsset,
     request: JSON.stringify(request)
   });
   
