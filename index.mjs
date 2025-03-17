@@ -66,6 +66,12 @@ export const handler = async (event) => {
       origin: request.origin
     });
 
+    // If this is already the Amplify domain, don't process it
+    if (host.includes('amplifyapp.com')) {
+      log('info', 'Skipping Amplify domain', { host });
+      return request;
+    }
+
     // Check cache first
     if (cache[host] && cache[host].expiry > Date.now()) {
       log('info', 'Cache hit', { host, cached: cache[host] });
@@ -180,14 +186,25 @@ function transformRequest(request, workspaceId) {
   const newDomain = 'master.d1ul468muq9dvs.amplifyapp.com';
   // Always ensure request.uri starts with /
   const requestUri = request.uri.startsWith('/') ? request.uri : `/${request.uri}`;
-  // Add workspace to path: /workspace-1/path
-  const newUri = `/${workspaceId}${requestUri}`;
+  
+  // Don't add workspace prefix for static assets
+  const isStaticAsset = requestUri.startsWith('/static/') || 
+                       requestUri.endsWith('.js') || 
+                       requestUri.endsWith('.css') || 
+                       requestUri.endsWith('.png') || 
+                       requestUri.endsWith('.jpg') || 
+                       requestUri.endsWith('.ico') || 
+                       requestUri.endsWith('.json');
+  
+  // Add workspace to path only for non-static assets: /workspace-1/path
+  const newUri = isStaticAsset ? requestUri : `/${workspaceId}${requestUri}`;
   
   log('info', 'Setting origin', { 
     originalHost: request.headers.host[0].value,
     newDomain,
     originalUri: request.uri,
     newUri,
+    isStaticAsset,
     request: JSON.stringify(request)
   });
   
